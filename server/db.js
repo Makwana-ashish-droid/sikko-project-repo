@@ -1,496 +1,139 @@
-import Database from 'better-sqlite3';
+import fs from 'fs';
 import path from 'path';
 import { fileURLToPath } from 'url';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
-const databasePath = path.resolve(__dirname, 'sikko.db');
-const db = new Database(databasePath);
+const dataDir = path.resolve(__dirname, 'data');
+const productsFile = path.join(dataDir, 'products.json');
+const settingsFile = path.join(dataDir, 'settings.json');
+const invoicesFile = path.join(dataDir, 'invoices.json');
 
-db.pragma('journal_mode = WAL');
+// Ensure data directory exists
+if (!fs.existsSync(dataDir)) {
+  fs.mkdirSync(dataDir, { recursive: true });
+}
 
-db.exec(`
-CREATE TABLE IF NOT EXISTS products (
-  id INTEGER PRIMARY KEY AUTOINCREMENT,
-  name TEXT UNIQUE NOT NULL,
-  description TEXT,
-  hsn TEXT,
-  packing TEXT,
-  price REAL,
-  gstRate REAL
-);
-
-CREATE TABLE IF NOT EXISTS settings (
-  key TEXT PRIMARY KEY,
-  value TEXT
-);
-
-CREATE TABLE IF NOT EXISTS consignees (
-  id INTEGER PRIMARY KEY AUTOINCREMENT,
-  name TEXT NOT NULL,
-  billingAddress TEXT,
-  shippingAddress TEXT,
-  gstNumber TEXT,
-  contactPerson TEXT,
-  createdAt TEXT NOT NULL
-);
-
-CREATE TABLE IF NOT EXISTS invoices (
-  id INTEGER PRIMARY KEY AUTOINCREMENT,
-  invoiceNumber TEXT UNIQUE NOT NULL,
-  invoiceDate TEXT,
-  consigneeId INTEGER,
-  dispatchLocation TEXT,
-  freight REAL,
-  roundOff REAL,
-  totalTaxable REAL,
-  totalGST REAL,
-  finalAmount REAL,
-  createdAt TEXT NOT NULL,
-  FOREIGN KEY (consigneeId) REFERENCES consignees(id)
-);
-
-CREATE TABLE IF NOT EXISTS invoice_items (
-  id INTEGER PRIMARY KEY AUTOINCREMENT,
-  invoiceId INTEGER NOT NULL,
-  sortOrder INTEGER NOT NULL DEFAULT 0,
-  productName TEXT,
-  description TEXT,
-  hsn TEXT,
-  packing TEXT,
-  quantity REAL,
-  price REAL,
-  gstRate REAL,
-  taxableValue REAL,
-  gstAmount REAL,
-  totalAmount REAL,
-  FOREIGN KEY (invoiceId) REFERENCES invoices(id)
-);
-`);
-
-// One-time migration from legacy `invoices.rows` JSON storage to normalized tables.
-// Safe to re-run; it detects legacy table and migrates only if needed.
-function migrateLegacyInvoicesIfNeeded() {
-  const hasLegacy = db
-    .prepare(`SELECT name FROM sqlite_master WHERE type='table' AND name='invoices_legacy'`)
-    .get();
-
-  // If we've already migrated (legacy exists), do nothing.
-  if (hasLegacy) return;
-
-  // Detect if this DB has the old `invoices` schema with `rows` column.
-  const invoicesTable = db.prepare(`SELECT name FROM sqlite_master WHERE type='table' AND name='invoices'`).get();
-  if (!invoicesTable) return;
-
-  const columns = db.prepare(`PRAGMA table_info(invoices)`).all();
-  const hasRowsColumn = columns.some(c => c?.name === 'rows');
-  if (!hasRowsColumn) return;
-
-  db.transaction(() => {
-    // Rename old table and recreate new normalized schema.
-    db.exec(`ALTER TABLE invoices RENAME TO invoices_legacy;`);
-
-    db.exec(`
-      CREATE TABLE IF NOT EXISTS consignees (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        name TEXT NOT NULL,
-        billingAddress TEXT,
-        shippingAddress TEXT,
-        gstNumber TEXT,
-        contactPerson TEXT,
-        createdAt TEXT NOT NULL
-      );
-
-      CREATE TABLE IF NOT EXISTS invoices (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        invoiceNumber TEXT UNIQUE NOT NULL,
-        invoiceDate TEXT,
-        consigneeId INTEGER,
-        dispatchLocation TEXT,
-        freight REAL,
-        roundOff REAL,
-        totalTaxable REAL,
-        totalGST REAL,
-        finalAmount REAL,
-        createdAt TEXT NOT NULL,
-        FOREIGN KEY (consigneeId) REFERENCES consignees(id)
-      );
-
-      CREATE TABLE IF NOT EXISTS invoice_items (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        invoiceId INTEGER NOT NULL,
-        sortOrder INTEGER NOT NULL DEFAULT 0,
-        productName TEXT,
-        description TEXT,
-        hsn TEXT,
-        packing TEXT,
-        quantity REAL,
-        price REAL,
-        gstRate REAL,
-        taxableValue REAL,
-        gstAmount REAL,
-        totalAmount REAL,
-        FOREIGN KEY (invoiceId) REFERENCES invoices(id)
-      );
-    `);
-
-    const legacyInvoices = db.prepare(`SELECT * FROM invoices_legacy ORDER BY id`).all();
-
-    const insertConsignee = db.prepare(`
-      INSERT INTO consignees (name, billingAddress, shippingAddress, gstNumber, contactPerson, createdAt)
-      VALUES (?, ?, ?, ?, ?, ?)
-    `);
-
-    const insertInvoice = db.prepare(`
-      INSERT INTO invoices (
-        id, invoiceNumber, invoiceDate, consigneeId, dispatchLocation,
-        freight, roundOff, totalTaxable, totalGST, finalAmount, createdAt
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-    `);
-
-    const insertItem = db.prepare(`
-      INSERT INTO invoice_items (
-        invoiceId, sortOrder, productName, description, hsn, packing,
-        quantity, price, gstRate, taxableValue, gstAmount, totalAmount
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-    `);
-
-    for (const inv of legacyInvoices) {
-      const createdAt = inv.createdAt || new Date().toISOString();
-      const consigneeId = insertConsignee.run(
-        inv.consigneeName || '',
-        inv.billingAddress || '',
-        inv.shippingAddress || '',
-        inv.gstNumber || '',
-        inv.contactPerson || '',
-        createdAt
-      ).lastInsertRowid;
-
-      insertInvoice.run(
-        inv.id,
-        inv.invoiceNumber,
-        inv.invoiceDate || null,
-        Number(consigneeId),
-        inv.dispatchLocation || '',
-        inv.freight ?? 0,
-        inv.roundOff ?? 0,
-        inv.totalTaxable ?? 0,
-        inv.totalGST ?? 0,
-        inv.finalAmount ?? 0,
-        createdAt
-      );
-
-      let items = [];
-      try {
-        items = JSON.parse(inv.rows || '[]') || [];
-      } catch {
-        items = [];
-      }
-
-      items.forEach((row, idx) => {
-        insertItem.run(
-          inv.id,
-          idx,
-          row?.productName ?? '',
-          row?.description ?? '',
-          row?.hsn ?? '',
-          row?.packing ?? '',
-          Number(row?.quantity ?? 0),
-          Number(row?.price ?? 0),
-          Number(row?.gstRate ?? 0),
-          Number(row?.taxableValue ?? 0),
-          Number(row?.gstAmount ?? 0),
-          Number(row?.totalAmount ?? 0)
-        );
-      });
+// Helper functions
+function readJSON(filePath, defaultValue = []) {
+  try {
+    if (fs.existsSync(filePath)) {
+      return JSON.parse(fs.readFileSync(filePath, 'utf8'));
     }
-  })();
-}
-
-// Run migration at startup (safe no-op if already migrated).
-migrateLegacyInvoicesIfNeeded();
-
-const defaultProducts = [
-  {
-    name: 'Super Potassium Humate Flake',
-    description: 'Premium quality humate for agriculture and soil conditioning.',
-    hsn: '38089910',
-    packing: '1 Kg Jar',
-    price: 1150,
-    gstRate: 18
-  },
-  {
-    name: 'Nano Zinc Sulphate',
-    description: 'Micronutrient supplement for crop yield enhancement.',
-    hsn: '38249010',
-    packing: '500 Gm Pouch',
-    price: 425,
-    gstRate: 18
-  },
-  {
-    name: 'Water Soluble NPK 19-19-19',
-    description: 'Balanced NPK for foliar spray and fertigation.',
-    hsn: '31052090',
-    packing: '5 Kg Bag',
-    price: 725,
-    gstRate: 5
-  },
-  {
-    name: 'Organic Bio-Stimulant',
-    description: 'Growth enhancer with natural fulvic acids.',
-    hsn: '38089910',
-    packing: '250 Ml Bottle',
-    price: 350,
-    gstRate: 5
+  } catch (error) {
+    console.error(`Error reading ${filePath}:`, error);
   }
-];
-
-const productCount = db.prepare('SELECT COUNT(*) AS count FROM products').get().count;
-if (productCount === 0) {
-  const insert = db.prepare(
-    'INSERT INTO products (name, description, hsn, packing, price, gstRate) VALUES (@name, @description, @hsn, @packing, @price, @gstRate)'
-  );
-  const insertMany = db.transaction(items => {
-    for (const item of items) insert.run(item);
-  });
-  insertMany(defaultProducts);
+  return defaultValue;
 }
 
+function writeJSON(filePath, data) {
+  try {
+    fs.writeFileSync(filePath, JSON.stringify(data, null, 2));
+  } catch (error) {
+    console.error(`Error writing ${filePath}:`, error);
+  }
+}
+
+// Initialize with default products if file doesn't exist
+function initializeProducts() {
+  if (!fs.existsSync(productsFile)) {
+    const defaultProducts = [
+      {
+        id: 1,
+        name: 'Sample Product 1',
+        description: 'A sample product for demonstration',
+        hsn: '123456',
+        packing: '1 KG',
+        price: 100,
+        gstRate: 18
+      },
+      {
+        id: 2,
+        name: 'Sample Product 2',
+        description: 'Another sample product',
+        hsn: '654321',
+        packing: '500 GM',
+        price: 50,
+        gstRate: 12
+      }
+    ];
+    writeJSON(productsFile, defaultProducts);
+  }
+}
+
+initializeProducts();
+
+// Product functions
 export function getAllProducts() {
-  return db.prepare('SELECT * FROM products ORDER BY name').all();
+  return readJSON(productsFile, []);
 }
 
 export function getProductById(id) {
-  return db.prepare('SELECT * FROM products WHERE id = ?').get(id);
+  const products = readJSON(productsFile, []);
+  return products.find(p => p.id === id);
 }
 
 export function createProduct(product) {
-  const result = db.prepare(
-    'INSERT INTO products (name, description, hsn, packing, price, gstRate) VALUES (?, ?, ?, ?, ?, ?)'
-  ).run(product.name, product.description, product.hsn, product.packing, product.price, product.gstRate);
-  return getProductById(result.lastInsertRowid);
+  const products = readJSON(productsFile, []);
+  const newId = products.length > 0 ? Math.max(...products.map(p => p.id)) + 1 : 1;
+  const newProduct = { ...product, id: newId };
+  products.push(newProduct);
+  writeJSON(productsFile, products);
+  return newProduct;
 }
 
 export function updateProduct(id, product) {
-  db.prepare(
-    'UPDATE products SET name = ?, description = ?, hsn = ?, packing = ?, price = ?, gstRate = ? WHERE id = ?'
-  ).run(product.name, product.description, product.hsn, product.packing, product.price, product.gstRate, id);
-  return getProductById(id);
+  const products = readJSON(productsFile, []);
+  const index = products.findIndex(p => p.id === id);
+  if (index === -1) return null;
+  products[index] = { ...product, id };
+  writeJSON(productsFile, products);
+  return products[index];
 }
 
 export function deleteProduct(id) {
-  return db.prepare('DELETE FROM products WHERE id = ?').run(id);
+  const products = readJSON(productsFile, []);
+  const filtered = products.filter(p => p.id !== id);
+  writeJSON(productsFile, filtered);
+  return { changes: products.length - filtered.length };
 }
 
-export function createInvoice(invoice) {
-  const createdAt = new Date().toISOString();
-
-  const insertConsignee = db.prepare(
-    `INSERT INTO consignees (name, billingAddress, shippingAddress, gstNumber, contactPerson, createdAt)
-     VALUES (?, ?, ?, ?, ?, ?)`
-  );
-  const consigneeId = insertConsignee.run(
-    invoice.consignee.name || '',
-    invoice.consignee.billingAddress || '',
-    invoice.consignee.shippingAddress || '',
-    invoice.consignee.gstNumber || '',
-    invoice.consignee.contactPerson || '',
-    createdAt
-  ).lastInsertRowid;
-
-  const insertInvoice = db.prepare(
-    `INSERT INTO invoices (
-      invoiceNumber,
-      invoiceDate,
-      consigneeId,
-      dispatchLocation,
-      freight,
-      roundOff,
-      totalTaxable,
-      totalGST,
-      finalAmount,
-      createdAt
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
-  );
-
-  const result = insertInvoice.run(
-    invoice.invoiceNumber,
-    invoice.invoiceDate,
-    Number(consigneeId),
-    invoice.consignee.dispatchLocation || '',
-    invoice.freight,
-    invoice.roundOff,
-    invoice.totalTaxableValue,
-    invoice.totalGST,
-    invoice.finalAmount,
-    createdAt
-  );
-
-  const insertItem = db.prepare(
-    `INSERT INTO invoice_items (
-      invoiceId, sortOrder, productName, description, hsn, packing,
-      quantity, price, gstRate, taxableValue, gstAmount, totalAmount
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
-  );
-
-  (invoice.rows || []).forEach((row, idx) => {
-    insertItem.run(
-      result.lastInsertRowid,
-      idx,
-      row?.productName ?? '',
-      row?.description ?? '',
-      row?.hsn ?? '',
-      row?.packing ?? '',
-      Number(row?.quantity ?? 0),
-      Number(row?.price ?? 0),
-      Number(row?.gstRate ?? 0),
-      Number(row?.taxableValue ?? 0),
-      Number(row?.gstAmount ?? 0),
-      Number(row?.totalAmount ?? 0)
-    );
-  });
-
-  return getInvoiceById(result.lastInsertRowid);
-}
-
-export function getInvoices() {
-  return db
-    .prepare(
-      `SELECT
-        i.id,
-        i.invoiceNumber,
-        i.invoiceDate,
-        c.name AS consigneeName,
-        i.dispatchLocation,
-        i.totalTaxable,
-        i.totalGST,
-        i.finalAmount,
-        i.createdAt
-      FROM invoices i
-      LEFT JOIN consignees c ON c.id = i.consigneeId
-      ORDER BY i.createdAt DESC`
-    )
-    .all();
-}
-
-export function getInvoiceById(id) {
-  const invoice = db
-    .prepare(
-      `SELECT
-        i.*,
-        c.name AS consigneeName,
-        c.billingAddress,
-        c.shippingAddress,
-        c.gstNumber,
-        c.contactPerson
-      FROM invoices i
-      LEFT JOIN consignees c ON c.id = i.consigneeId
-      WHERE i.id = ?`
-    )
-    .get(id);
-  if (!invoice) return null;
-
-  const rows = db
-    .prepare(
-      `SELECT
-        productName,
-        description,
-        hsn,
-        packing,
-        quantity,
-        price,
-        gstRate,
-        taxableValue,
-        gstAmount,
-        totalAmount
-      FROM invoice_items
-      WHERE invoiceId = ?
-      ORDER BY sortOrder ASC, id ASC`
-    )
-    .all(id);
-
-  return { ...invoice, rows };
-}
-
-export function updateInvoice(id, invoice) {
-  const createdAt = new Date().toISOString();
-
-  const insertConsignee = db.prepare(
-    `INSERT INTO consignees (name, billingAddress, shippingAddress, gstNumber, contactPerson, createdAt)
-     VALUES (?, ?, ?, ?, ?, ?)`
-  );
-  const consigneeId = insertConsignee.run(
-    invoice.consignee.name || '',
-    invoice.consignee.billingAddress || '',
-    invoice.consignee.shippingAddress || '',
-    invoice.consignee.gstNumber || '',
-    invoice.consignee.contactPerson || '',
-    createdAt
-  ).lastInsertRowid;
-
-  db.prepare(
-    `UPDATE invoices SET
-      invoiceNumber = ?,
-      invoiceDate = ?,
-      consigneeId = ?,
-      dispatchLocation = ?,
-      freight = ?,
-      roundOff = ?,
-      totalTaxable = ?,
-      totalGST = ?,
-      finalAmount = ?
-    WHERE id = ?`
-  ).run(
-    invoice.invoiceNumber,
-    invoice.invoiceDate,
-    Number(consigneeId),
-    invoice.consignee.dispatchLocation || '',
-    invoice.freight,
-    invoice.roundOff,
-    invoice.totalTaxableValue,
-    invoice.totalGST,
-    invoice.finalAmount,
-    id
-  );
-
-  db.prepare(`DELETE FROM invoice_items WHERE invoiceId = ?`).run(id);
-  const insertItem = db.prepare(
-    `INSERT INTO invoice_items (
-      invoiceId, sortOrder, productName, description, hsn, packing,
-      quantity, price, gstRate, taxableValue, gstAmount, totalAmount
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
-  );
-
-  (invoice.rows || []).forEach((row, idx) => {
-    insertItem.run(
-      id,
-      idx,
-      row?.productName ?? '',
-      row?.description ?? '',
-      row?.hsn ?? '',
-      row?.packing ?? '',
-      Number(row?.quantity ?? 0),
-      Number(row?.price ?? 0),
-      Number(row?.gstRate ?? 0),
-      Number(row?.taxableValue ?? 0),
-      Number(row?.gstAmount ?? 0),
-      Number(row?.totalAmount ?? 0)
-    );
-  });
-
-  return getInvoiceById(id);
+// Settings functions
+export function getPaymentSettings() {
+  const settings = readJSON(settingsFile, {});
+  return settings.payment || null;
 }
 
 export function savePaymentSettings(settings) {
-  db.prepare('INSERT OR REPLACE INTO settings (key, value) VALUES (?, ?)').run('payment', JSON.stringify(settings));
+  const allSettings = readJSON(settingsFile, {});
+  allSettings.payment = settings;
+  writeJSON(settingsFile, allSettings);
   return settings;
 }
 
-export function getPaymentSettings() {
-  const row = db.prepare('SELECT value FROM settings WHERE key = ?').get('payment');
-  if (!row?.value) return null;
-  try {
-    return JSON.parse(row.value);
-  } catch {
-    return null;
-  }
+// Invoice functions (simplified for now)
+export function getInvoices() {
+  return readJSON(invoicesFile, []);
+}
+
+export function getInvoiceById(id) {
+  const invoices = readJSON(invoicesFile, []);
+  return invoices.find(i => i.id === id);
+}
+
+export function createInvoice(invoice) {
+  const invoices = readJSON(invoicesFile, []);
+  const newId = invoices.length > 0 ? Math.max(...invoices.map(i => i.id)) + 1 : 1;
+  const newInvoice = { ...invoice, id: newId, createdAt: new Date().toISOString() };
+  invoices.push(newInvoice);
+  writeJSON(invoicesFile, invoices);
+  return newInvoice;
+}
+
+export function updateInvoice(id, invoice) {
+  const invoices = readJSON(invoicesFile, []);
+  const index = invoices.findIndex(i => i.id === id);
+  if (index === -1) return null;
+  invoices[index] = { ...invoice, id };
+  writeJSON(invoicesFile, invoices);
+  return invoices[index];
 }

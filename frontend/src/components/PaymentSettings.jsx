@@ -14,6 +14,7 @@ const defaultSettings = {
 export default function PaymentSettings() {
   const [settings, setSettings] = useState(defaultSettings);
   const [status, setStatus] = useState('Loading...');
+  const [qrFile, setQrFile] = useState(null);
 
   useEffect(() => {
     async function loadSettings() {
@@ -33,6 +34,19 @@ export default function PaymentSettings() {
 
   function updateField(key, value) {
     setSettings(prev => ({ ...prev, [key]: value }));
+  }
+
+  function handleQrUpload(event) {
+    const file = event.target.files?.[0];
+    if (file) {
+      const reader = new FileReader();
+      reader.onload = (e) => {
+        const base64String = e.target?.result;
+        setQrFile(file.name);
+        updateField('qrCodeUrl', base64String);
+      };
+      reader.readAsDataURL(file);
+    }
   }
 
   async function saveSettings() {
@@ -81,13 +95,16 @@ export default function PaymentSettings() {
             </label>
           ))}
           <label className="block md:col-span-2">
-            <span className="text-sm font-medium text-slate-700">UPI QR Code URL</span>
-            <input
-              type="url"
-              value={settings.qrCodeUrl}
-              onChange={event => updateField('qrCodeUrl', event.target.value)}
-              className="mt-2 w-full"
-            />
+            <span className="text-sm font-medium text-slate-700">UPI QR Code</span>
+            <div className="mt-2 flex gap-3">
+              <input
+                type="file"
+                accept="image/*"
+                onChange={handleQrUpload}
+                className="mt-2 flex-1"
+              />
+              {qrFile && <span className="mt-4 text-sm text-green-600">✓ {qrFile}</span>}
+            </div>
           </label>
         </div>
 
