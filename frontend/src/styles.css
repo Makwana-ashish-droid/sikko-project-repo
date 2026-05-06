@@ -1,0 +1,30 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  color-scheme: light;
+}
+
+html,
+body,
+#root {
+  height: 100%;
+}
+
+body {
+  @apply bg-slate-50 text-slate-900 overflow-hidden antialiased;
+}
+
+input,
+select,
+textarea {
+  @apply border border-slate-300/80 rounded-xl px-3.5 py-2.5 shadow-sm outline-none bg-white/90;
+  @apply focus:border-indigo-500 focus:ring-4 focus:ring-indigo-200/60;
+  @apply placeholder:text-slate-400;
+}
+
+button {
+  @apply inline-flex items-center justify-center rounded-xl px-4 py-2.5 font-semibold transition;
+  @apply focus:outline-none focus-visible:ring-4 focus-visible:ring-indigo-200/70;
+}
