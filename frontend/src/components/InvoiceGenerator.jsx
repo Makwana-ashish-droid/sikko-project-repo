@@ -6,6 +6,9 @@ import html2canvas from 'html2canvas';
 import { numberToWords } from '../utils/numberToWords';
 import { upsertStoredInvoice } from '../utils/invoices';
 
+const localQrPath = '/upi-qr.png';
+const fallbackQrUrl = 'https://api.qrserver.com/v1/create-qr-code/?size=280x280&data=upi://pay?pa=sikko@icici&pn=Sikko%20Industries%20Ltd';
+
 const consignor = {
   companyName: 'Sikko Industries Ltd',
   regOffice: '801, Sikko House, Nr. Makarba Cross Road, Ahmedabad - 380051',
@@ -20,7 +23,7 @@ const consignor = {
     ifsc: 'ICIC0001234',
     branch: 'Ahmedabad',
     upiId: 'sikko@icici',
-    qrCodeUrl: 'https://via.placeholder.com/130?text=UPI+QR'
+    qrCodeUrl: localQrPath
   }
 };
 
@@ -211,7 +214,12 @@ export default function InvoiceGenerator() {
 
   async function handleExportPDF() {
     if (!invoiceRef.current) return;
-    const canvas = await html2canvas(invoiceRef.current, { scale: 2 });
+    const canvas = await html2canvas(invoiceRef.current, {
+      scale: 2,
+      useCORS: true,
+      allowTaint: true,
+      imageTimeout: 15000
+    });
     const imgData = canvas.toDataURL('image/png');
     const pdf = new jsPDF({ orientation: 'portrait', unit: 'pt', format: 'a4' });
     const pageWidth = pdf.internal.pageSize.getWidth();
@@ -533,7 +541,11 @@ export default function InvoiceGenerator() {
           </button>
         </div>
 
-        <div ref={invoiceRef} className="rounded-3xl border border-slate-200 bg-white p-6 text-slate-900 shadow-sm">
+        <div ref={invoiceRef} className="relative overflow-hidden rounded-3xl border border-slate-200 bg-white/95 p-6 text-slate-900 shadow-sm">
+          <div
+            className="pointer-events-none absolute inset-0 -z-10 bg-center bg-no-repeat opacity-15"
+            style={{ backgroundImage: "url('/logo.png')", backgroundSize: '40%' }}
+          />
           <div className="mb-6 flex flex-col gap-4 border-b border-slate-200 pb-6 lg:flex-row lg:items-start lg:justify-between">
             <div className="flex items-start gap-4">
               <img
@@ -564,7 +576,7 @@ export default function InvoiceGenerator() {
           </div>
 
           <div className="grid gap-6 lg:grid-cols-[1.2fr_1fr]">
-            <div className="space-y-4 rounded-3xl border border-slate-200 bg-slate-50 p-5">
+            <div className="space-y-4 rounded-3xl border border-slate-200 bg-slate-50/95 p-5">
               <h3 className="text-sm font-semibold uppercase tracking-[0.24em] text-slate-600">Consignor</h3>
               <p className="text-sm text-slate-700 font-semibold">{consignor.companyName}</p>
               <p className="text-sm text-slate-700">{consignor.regOffice}</p>
@@ -573,7 +585,7 @@ export default function InvoiceGenerator() {
               <p className="text-sm text-slate-700">A/c No: {consignor.bankDetails.accountNumber}</p>
               <p className="text-sm text-slate-700">IFSC: {consignor.bankDetails.ifsc}</p>
             </div>
-            <div className="space-y-4 rounded-3xl border border-slate-200 bg-slate-50 p-5">
+            <div className="space-y-4 rounded-3xl border border-slate-200 bg-slate-50/95 p-5">
               <h3 className="text-sm font-semibold uppercase tracking-[0.24em] text-slate-600">Consignee</h3>
               <p className="text-sm text-slate-700 font-semibold">{consignee.name || 'Buyer Name'}</p>
               <p className="text-sm text-slate-700">{consignee.billingAddress || 'Billing Address'}</p>
@@ -598,7 +610,7 @@ export default function InvoiceGenerator() {
                   <th className="px-3 py-3 font-semibold">Amount</th>
                 </tr>
               </thead>
-              <tbody className="divide-y divide-slate-200 bg-white">
+              <tbody className="divide-y divide-slate-200 bg-white/90">
                 {computedRows.map((row, index) => (
                   <tr key={index}>
                     <td className="px-3 py-3 align-top">{row.productName || 'Item'}<br /><span className="text-xs text-slate-500">{row.description}</span></td>
@@ -617,7 +629,7 @@ export default function InvoiceGenerator() {
           </div>
 
           <div className="mt-6 grid gap-4 lg:grid-cols-[1fr_0.7fr]">
-            <div className="rounded-3xl border border-slate-200 bg-slate-50 p-5">
+            <div className="rounded-3xl border border-slate-200 bg-slate-50/95 p-5">
               <h3 className="text-sm font-semibold uppercase tracking-[0.24em] text-slate-600">Terms & Conditions</h3>
               <ul className="mt-4 list-disc space-y-2 text-sm text-slate-700 pl-5">
                 <li>100% Advanced Payment before dispatch.</li>
@@ -626,7 +638,7 @@ export default function InvoiceGenerator() {
                 <li>Billing as per the chosen dispatch location.</li>
               </ul>
             </div>
-            <div className="rounded-3xl border border-slate-200 bg-slate-50 p-5">
+            <div className="rounded-3xl border border-slate-200 bg-slate-50/90 p-5">
               <div className="space-y-4 text-sm text-slate-700">
                 <div className="grid grid-cols-2 gap-4">
                   <span>Total Taxable Value</span>
@@ -653,25 +665,34 @@ export default function InvoiceGenerator() {
           </div>
 
           <div className="mt-6 grid gap-6 lg:grid-cols-2">
-            <div className="rounded-3xl border border-slate-200 p-5">
+            <div className="rounded-3xl border border-slate-200 bg-slate-50/90 p-5">
               <p className="text-sm font-semibold uppercase tracking-[0.24em] text-slate-600">Bank Details</p>
               <p className="mt-3 text-sm text-slate-700">{paymentSettings?.bankName || consignor.bankDetails.bankName}</p>
               <p className="text-sm text-slate-700">A/c No: {paymentSettings?.accountNumber || consignor.bankDetails.accountNumber}</p>
               <p className="text-sm text-slate-700">IFSC: {paymentSettings?.ifsc || consignor.bankDetails.ifsc}</p>
               <p className="text-sm text-slate-700">UPI ID: {paymentSettings?.upiId || consignor.bankDetails.upiId}</p>
             </div>
-            <div className="rounded-3xl border border-slate-200 p-5">
+            <div className="rounded-3xl border border-slate-200 bg-slate-50/90 p-5">
               <p className="text-sm font-semibold uppercase tracking-[0.24em] text-slate-600">Payment QR</p>
-              <img src={paymentSettings?.qrCodeUrl || consignor.bankDetails.qrCodeUrl} alt="UPI QR" className="mt-4 h-40 w-40 rounded-2xl border border-slate-200 object-contain" />
+              <img
+                src={paymentSettings?.qrCodeUrl || consignor.bankDetails.qrCodeUrl}
+                alt="UPI QR"
+                crossOrigin="anonymous"
+                onError={(event) => {
+                  event.currentTarget.onerror = null;
+                  event.currentTarget.src = fallbackQrUrl;
+                }}
+                className="mt-4 h-40 w-40 rounded-2xl border border-slate-200 object-contain"
+              />
             </div>
           </div>
 
           <div className="mt-8 grid gap-6 lg:grid-cols-2">
-            <div className="rounded-3xl border border-slate-200 bg-slate-50 p-6 text-sm text-slate-700">
+            <div className="rounded-3xl border border-slate-200 bg-slate-50/95 p-6 text-sm text-slate-700">
               <p className="font-semibold text-slate-900">Trade Executive</p>
               <div className="mt-10 h-20 border-b border-slate-300" />
             </div>
-            <div className="rounded-3xl border border-slate-200 bg-slate-50 p-6 text-sm text-slate-700">
+            <div className="rounded-3xl border border-slate-200 bg-slate-50/95 p-6 text-sm text-slate-700">
               <p className="font-semibold text-slate-900">Consignee Acceptance</p>
               <div className="mt-10 h-20 border-b border-slate-300" />
             </div>

@@ -4,6 +4,9 @@ import { useReactToPrint } from 'react-to-print';
 import { numberToWords } from '../utils/numberToWords';
 import { getStoredInvoiceById } from '../utils/invoices';
 
+const localQrPath = '/upi-qr.png';
+const fallbackQrUrl = 'https://api.qrserver.com/v1/create-qr-code/?size=280x280&data=upi://pay?pa=sikko@icici&pn=Sikko%20Industries%20Ltd';
+
 function formatCurrency(value) {
   return new Intl.NumberFormat('en-IN', { style: 'currency', currency: 'INR' }).format(value);
 }
@@ -122,7 +125,7 @@ export default function InvoiceDetail() {
                 <th className="px-3 py-3 font-semibold">Amount</th>
               </tr>
             </thead>
-            <tbody className="divide-y divide-slate-200 bg-white">
+            <tbody className="divide-y divide-slate-200 bg-white/90">
               {invoice.rows.map((row, index) => (
                 <tr key={index}>
                   <td className="px-3 py-3 align-top">{row.productName || 'Item'}<br /><span className="text-xs text-slate-500">{row.description}</span></td>
@@ -140,16 +143,31 @@ export default function InvoiceDetail() {
           </table>
         </div>
 
-        <div className="mt-6 grid gap-4 lg:grid-cols-[1fr_0.7fr]">
-          <div className="rounded-3xl border border-slate-200 bg-slate-50 p-5 text-sm text-slate-700">
-            <p className="font-semibold text-slate-900">Terms & Conditions</p>
-            <ul className="mt-4 list-disc space-y-2 pl-5">
-              <li>100% Advanced Payment before dispatch.</li>
-              <li>Subject to Ahmedabad Jurisdiction.</li>
-              <li>Billing as per chosen dispatch location.</li>
-            </ul>
+        <div className="mt-6 grid gap-4 lg:grid-cols-[1.1fr_0.9fr]">
+          <div className="space-y-4">
+            <div className="rounded-3xl border border-slate-200 bg-slate-50/90 p-5 text-sm text-slate-700">
+              <p className="font-semibold text-slate-900">Terms & Conditions</p>
+              <ul className="mt-4 list-disc space-y-2 pl-5">
+                <li>100% Advanced Payment before dispatch.</li>
+                <li>Subject to Ahmedabad Jurisdiction.</li>
+                <li>Billing as per chosen dispatch location.</li>
+              </ul>
+            </div>
+            <div className="rounded-3xl border border-slate-200 bg-slate-50/90 p-5">
+              <p className="text-sm font-semibold uppercase tracking-[0.24em] text-slate-600">Payment QR</p>
+              <img
+                src={localQrPath}
+                alt="UPI QR"
+                crossOrigin="anonymous"
+                onError={(event) => {
+                  event.currentTarget.onerror = null;
+                  event.currentTarget.src = fallbackQrUrl;
+                }}
+                className="mt-4 h-40 w-40 rounded-2xl border border-slate-200 object-contain"
+              />
+            </div>
           </div>
-          <div className="rounded-3xl border border-slate-200 bg-slate-50 p-5 text-sm text-slate-700">
+          <div className="rounded-3xl border border-slate-200 bg-slate-50/90 p-5 text-sm text-slate-700">
             <p className="font-semibold text-slate-900">Summary</p>
             <div className="mt-4 space-y-2">
               <div className="grid grid-cols-2 gap-4">

@@ -53,7 +53,7 @@ const defaultPaymentSettings = {
   accountHolder: 'Sikko Industries Ltd',
   branch: 'Ahmedabad',
   gstNumber: '24AABCS1234D1Z5',
-  qrCodeUrl: 'https://via.placeholder.com/130?text=UPI+QR'
+  qrCodeUrl: 'https://api.qrserver.com/v1/create-qr-code/?size=280x280&data=upi://pay?pa=sikko@icici&pn=Sikko%20Industries%20Ltd'
 };
 
 function calculateTotals(rows, freight, roundOff) {

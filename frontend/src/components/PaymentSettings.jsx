@@ -1,11 +1,14 @@
 import { useEffect, useState } from 'react';
 
+const localQrPath = '/upi-qr.png';
+const fallbackQrUrl = 'https://api.qrserver.com/v1/create-qr-code/?size=280x280&data=upi://pay?pa=sikko@icici&pn=Sikko%20Industries%20Ltd';
+
 const defaultSettings = {
   bankName: 'ICICI Bank',
   accountNumber: '123456789012',
   ifsc: 'ICIC0001234',
   upiId: 'sikko@icici',
-  qrCodeUrl: 'https://via.placeholder.com/140?text=UPI+QR',
+  qrCodeUrl: localQrPath,
   accountHolder: 'Sikko Industries Ltd',
   branch: 'Ahmedabad',
   gstNumber: '24AABCS1234D1Z5'
@@ -127,7 +130,16 @@ export default function PaymentSettings() {
           <div className="rounded-2xl border border-slate-200 bg-slate-50 p-4">
             <p className="text-sm font-semibold text-slate-800">UPI</p>
             <p className="mt-2 text-sm text-slate-700">{settings.upiId}</p>
-            <img src={settings.qrCodeUrl} alt="UPI QR" className="mt-3 h-32 w-32 rounded-xl object-contain border border-slate-200 bg-white" />
+            <img
+              src={settings.qrCodeUrl || localQrPath}
+              crossOrigin="anonymous"
+              onError={(event) => {
+                event.currentTarget.onerror = null;
+                event.currentTarget.src = fallbackQrUrl;
+              }}
+              alt="UPI QR"
+              className="mt-3 h-32 w-32 rounded-xl object-contain border border-slate-200 bg-white"
+            />
           </div>
         </div>
       </section>

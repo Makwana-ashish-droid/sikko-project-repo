@@ -120,6 +120,7 @@ export default function Login({ onLogin }) {
                     placeholder="you@company.com"
                     autoComplete="email"
                     className="mt-2 w-full"
+                    required={false}
                   />
                 </div>
               </div>
